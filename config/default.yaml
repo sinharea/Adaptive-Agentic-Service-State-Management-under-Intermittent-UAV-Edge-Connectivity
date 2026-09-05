@@ -1,0 +1,124 @@
+# =============================================================================
+# Default Configuration for UAV-Edge State Management Simulation
+# =============================================================================
+
+# --- Simulation ---
+simulation:
+  duration: 1000          # Total simulation steps (1 step = 1 second)
+  random_seed: 42
+  num_seeds: 5            # Number of random seeds for statistical analysis
+  area_width: 1000.0      # meters
+  area_height: 1000.0     # meters
+
+# --- UAV Nodes ---
+uav:
+  count: 5
+  communication_radius: 200.0  # meters
+  velocity_range: [5.0, 20.0]  # m/s (min, max)
+  cpu_capacity: 4.0             # GHz
+  memory_capacity: 8192.0       # MB
+  storage_capacity: 64000.0     # MB
+  initial_utilization:
+    cpu: 0.2
+    memory: 0.3
+    storage: 0.1
+
+# --- Mobility ---
+mobility:
+  model: "random_waypoint"      # Options: random_waypoint, random_walk
+  pause_time: [0.0, 5.0]       # seconds (min, max) for waypoint model
+  direction_change_interval: 10 # steps, for random walk
+
+# --- Network ---
+network:
+  max_bandwidth: 100.0          # Mbps at zero distance
+  min_bandwidth: 1.0            # Mbps threshold for connectivity
+  latency_base: 5.0             # ms base latency
+  latency_per_km: 10.0          # ms additional latency per km
+  packet_loss_base: 0.001       # base packet loss rate
+  packet_loss_distance_factor: 0.01  # additional loss per 100m
+  connectivity_thresholds:
+    connected: 0.7              # bandwidth ratio above this = connected
+    degraded: 0.3               # bandwidth ratio above this = degraded
+                                # below degraded = disconnected
+
+# --- Service ---
+service:
+  state_size: 100.0             # MB (default)
+  state_update_rate: 1.0        # MB/s
+  priority: "medium"            # low, medium, high
+  sla_max_interruption: 10.0    # seconds
+  sla_max_recovery_time: 30.0   # seconds
+
+# --- Checkpoint ---
+checkpoint:
+  enabled: true
+  interval: 50                  # steps between automatic checkpoints
+  cpu_overhead_fraction: 0.1    # fraction of CPU used during checkpoint
+  storage_multiplier: 1.1       # checkpoint size = state_size * multiplier
+  max_checkpoints: 3            # max stored checkpoints per service
+
+# --- Replication ---
+replication:
+  enabled: true
+  max_replicas: 2
+  sync_interval: 20             # steps between synchronization attempts
+  bandwidth_fraction: 0.2       # fraction of bandwidth used for sync
+
+# --- Migration ---
+migration:
+  bandwidth_fraction: 0.5       # fraction of bandwidth used for migration
+  cpu_overhead_fraction: 0.15   # CPU overhead during migration
+  min_bandwidth_required: 10.0  # Mbps minimum to attempt migration
+  min_contact_duration: 30.0    # seconds minimum predicted contact for migration
+
+# --- Objective Function Weights ---
+objective:
+  w_interruption: 1.0
+  w_state_transfer: 0.3
+  w_state_loss: 2.0
+  w_migration_cost: 0.5
+  w_sla_violation: 1.5
+  w_resource_cost: 0.2
+
+# --- Threshold Agent ---
+threshold_agent:
+  bandwidth_threshold: 20.0    # Mbps — migrate if below
+  latency_threshold: 100.0     # ms — migrate if above
+  cpu_threshold: 0.85          # fraction — migrate if above
+
+# --- Mobility Agent ---
+mobility_agent:
+  contact_duration_threshold: 60.0  # seconds — migrate if predicted < this
+  use_velocity_prediction: true
+
+# --- RL Agent ---
+rl_agent:
+  learning_rate: 0.001
+  gamma: 0.99
+  epsilon_start: 1.0
+  epsilon_end: 0.05
+  epsilon_decay: 0.995
+  batch_size: 32
+  memory_size: 10000
+  training_episodes: 500
+
+# --- Agentic Manager ---
+agentic_manager:
+  memory_capacity: 1000        # max stored experiences
+  context_window: 10           # recent observations for context
+  risk_sensitivity: 0.5        # 0.0 = risk-seeking, 1.0 = risk-averse
+  decision_engine: "rule_based" # Options: rule_based, rl, llm, hybrid
+
+# --- Experimental Variables ---
+experiments:
+  connectivity_levels:
+    - { name: "stable", failure_prob: 0.05 }
+    - { name: "moderate", failure_prob: 0.20 }
+    - { name: "highly_intermittent", failure_prob: 0.50 }
+  state_sizes: [50, 100, 250, 500, 1000]   # MB
+  uav_velocities: [5, 10, 15, 20, 30]      # m/s
+  bandwidth_levels: [10, 25, 50, 100, 200]  # Mbps
+  uav_counts: [2, 3, 5, 10, 20]
+  service_priorities: ["low", "medium", "high"]
+  failure_probabilities: [0.0, 0.1, 0.2, 0.3, 0.5]
