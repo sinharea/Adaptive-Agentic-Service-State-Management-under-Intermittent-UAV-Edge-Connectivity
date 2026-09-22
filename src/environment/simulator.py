@@ -115,6 +115,9 @@ class Simulator:
 
         # Metrics
         sim_metrics = SimulationMetrics(strategy=strategy, seed=seed)
+        # --- Tracking state for disruption/recovery model ---
+        recovery_countdown = 0  # steps remaining until service recovers
+        last_disruption_step = -100
 
         # --- Simulation loop ---
         for step in range(1, self.duration + 1):
@@ -128,6 +131,78 @@ class Simulator:
 
             # 2. Inject network failures
             network.inject_failures(uavs, rng)
+
+            # 2.5 Auto-recovery: if service is down and countdown expires
+            if not service.is_running and recovery_countdown > 0:
+                recovery_countdown -= 1
+                if recovery_countdown == 0:
+                    # Auto-recover: end the interruption
+                    duration = service.end_interruption(step)
+                    step_metrics.recovery_time = duration
+
+            # 2.6 Connectivity-driven service disruption
+            # Models: UAV services depend on connectivity to ground station
+            # or peer nodes. Isolation + network failure → service disruption.
+            source_uav = uav_map[service.current_node]
+            if service.is_running and not service.is_migrating:
+                neighbors = source_uav.get_neighbors(uavs)
+                connected_neighbors = 0
+                for neighbor in neighbors:
+                    link = network.evaluate_link(source_uav, neighbor)
+                    if link.state != ConnectivityState.DISCONNECTED:
+                        connected_neighbors += 1
+
+                # Disruption probability: isolated nodes are much more
+                # vulnerable; connected nodes still face some risk under
+                # heavy failure conditions.
+                if connected_neighbors == 0:
+                    disruption_prob = min(failure_prob * 1.5, 0.6)
+                elif connected_neighbors == 1:
+                    disruption_prob = failure_prob * 0.4
+                else:
+                    disruption_prob = failure_prob * 0.1
+
+                # Cooldown: don't disrupt again for 5 steps after recovery
+                if (step - last_disruption_step) < 5:
+                    disruption_prob = 0.0
+
+                if disruption_prob > 0 and rng.random() < disruption_prob:
+                    service.begin_interruption(step)
+                    last_disruption_step = step
+
+                    # State loss depends on checkpoint/replica freshness
+                    if service.has_checkpoint:
+                        step_metrics.state_loss = min(
+                            service.checkpoint_staleness, 50)
+                    elif service.num_replicas > 0:
+                        step_metrics.state_loss = min(
+                            service.replica_staleness, 50)
+                    else:
+                        # No protection → lose all accumulated state
+                        step_metrics.state_loss = min(
+                            service.state_version, 50)
+
+                    service.total_state_loss += step_metrics.state_loss
+                    step_metrics.interruption = True
+
+                    # Recovery time depends on available recovery sources:
+                    # - Fresh checkpoint → fast recovery (2-5 steps)
+                    # - Stale checkpoint → moderate (5-15 steps)
+                    # - Replica only → moderate (3-8 steps)
+                    # - Cold restart (nothing) → slow (10-30 steps)
+                    if service.has_checkpoint and service.checkpoint_staleness < 20:
+                        recovery_countdown = int(2 + service.state_size / 200)
+                    elif service.has_checkpoint:
+                        recovery_countdown = int(
+                            5 + service.checkpoint_staleness / 10)
+                    elif service.num_replicas > 0:
+                        recovery_countdown = int(3 + service.state_size / 150)
+                    else:
+                        recovery_countdown = int(
+                            10 + service.state_size / 50)
+
+                    # Cap recovery time
+                    recovery_countdown = min(recovery_countdown, 30)
 
             # 3. Update service state
             service.update_state(step)
@@ -148,9 +223,19 @@ class Simulator:
                 step, step_metrics,
             )
 
+            # 6.5 If agent recovered the service, cancel auto-recovery
+            if service.is_running:
+                recovery_countdown = 0
+
             # 7. Collect metrics
             step_metrics.service_running = service.is_running
-            step_metrics.interruption = not service.is_running
+            if not service.is_running:
+                step_metrics.interruption = True
+            # SLA check for ongoing interruption
+            if (service.interruption_start is not None and
+                    (step - service.interruption_start) > service.sla_max_interruption):
+                step_metrics.sla_violation = True
+
             step_metrics.bandwidth = obs.bandwidth
             step_metrics.latency = obs.latency
             step_metrics.packet_loss = obs.packet_loss
