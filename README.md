@@ -80,6 +80,8 @@ The system simulates a fleet of UAV-mounted edge nodes running stateful services
 │       ├── metrics.py             # Per-step and aggregate metrics collection
 │       ├── analysis.py            # Statistical analysis (mean, std, CI)
 │       └── plots.py               # Publication-quality visualization
+├── scripts/
+│   └── generate_plots.py         # Generate all comparison plots
 ├── tests/                         # Unit and integration tests (149+ tests)
 ├── results/                       # Output: CSV results and plots
 ├── main.py                        # CLI experiment runner
@@ -97,7 +99,7 @@ The system simulates a fleet of UAV-mounted edge nodes running stateful services
 ### Installation
 
 ```bash
-git clone https://github.com/<user>/Adaptive-Agentic-Service-State-Management-under-Intermittent-UAV-Edge-Connectivity.git
+git clone https://github.com/sinharea/Adaptive-Agentic-Service-State-Management-under-Intermittent-UAV-Edge-Connectivity.git
 cd Adaptive-Agentic-Service-State-Management-under-Intermittent-UAV-Edge-Connectivity
 pip install -r requirements.txt
 ```
@@ -117,7 +119,7 @@ python main.py --config config/default.yaml --experiment default
 ### Run Specific Experiments
 
 ```bash
-# Vary connectivity reliability
+# Vary connectivity reliability (generates key comparison data)
 python main.py --experiment connectivity
 
 # Vary service state size
@@ -133,11 +135,128 @@ python main.py --experiment all
 python main.py --strategies local_execution agentic_manager --experiment default
 ```
 
+### Generate Comparison Plots
+
+```bash
+# Generate publication-quality plots from experiment results
+python scripts/generate_plots.py
+```
+
 ### Output
 
 Results are saved to `results/`:
 - `results/*.csv` — Raw and aggregated metric tables
 - `results/plots/` — Publication-quality figures (PNG + PDF)
+
+---
+
+## Reproducing & Verifying Results
+
+Follow these steps to independently verify all prototype results from scratch:
+
+### Step 1: Verify Unit Tests (149 tests)
+
+```bash
+python -m pytest tests/ -v --tb=short
+```
+
+This validates every component in isolation: UAV mobility, network model, service state, checkpoint/recovery, replication/synchronization, migration, all 5 agents, and the agentic decision engine.
+
+### Step 2: Run the Integration Test
+
+```bash
+python tests/test_integration_quick.py
+```
+
+This runs 4 strategies end-to-end for 100 steps each. Under default config (no failures), all strategies should achieve 1.000 service availability.
+
+### Step 3: Run the Connectivity Experiment (Key Results)
+
+```bash
+python main.py --experiment connectivity
+```
+
+This runs **125 simulation episodes** (5 strategies × 5 failure levels × 5 seeds).  
+Output: `results/connectivity_results.csv`
+
+### Step 4: Verify the Data
+
+```bash
+python -c "
+import pandas as pd
+df = pd.read_csv('results/connectivity_results.csv')
+summary = df.groupby(['strategy','failure_probability'])[
+    ['service_availability','total_recovery_time','total_state_loss',
+     'sla_violations','objective_cost']].mean().round(2)
+print(summary.to_string())
+"
+```
+
+**What to verify:**
+- At `failure_probability=0.0`, all strategies achieve 1.0 availability and 0 state loss
+- As failure probability increases, passive strategies (local, threshold) degrade faster
+- Proactive strategies (mobility-aware, RL, agentic) maintain higher availability
+- The agentic manager achieves fewer SLA violations than passive baselines
+
+### Step 5: Generate and Inspect Plots
+
+```bash
+python scripts/generate_plots.py
+```
+
+Generated plots in `results/plots/`:
+
+| Plot | File | What It Shows |
+|------|------|---------------|
+| Recovery Time | `recovery_time_comparison.png` | Mean recovery time per strategy (lower = better) |
+| Cost Comparison | `cost_comparison.png` | Weighted objective cost at each failure level |
+| Availability | `availability_vs_failure.png` | Service availability degradation curves |
+| State Loss | `state_loss_vs_failure.png` | Cumulative state loss under stress |
+| SLA Violations | `sla_violations_comparison.png` | SLA violation counts (lower = better) |
+| Heatmap | `performance_heatmap.png` | Multi-metric normalized comparison |
+
+### Step 6: Verify Reproducibility
+
+Run the same experiment twice with identical seeds:
+
+```bash
+python main.py --experiment connectivity
+# Save results
+copy results\connectivity_results.csv results\run1.csv
+
+python main.py --experiment connectivity
+# Compare
+python -c "
+import pandas as pd
+r1 = pd.read_csv('results/run1.csv')
+r2 = pd.read_csv('results/connectivity_results.csv')
+print('Identical:', r1.equals(r2))
+"
+```
+
+Both runs should produce **identical results** because all randomness is seeded.
+
+### Step 7: Modify Parameters and Re-run
+
+Edit `config/default.yaml` to test different scenarios:
+
+```yaml
+# Try more aggressive failure conditions
+experiments:
+  failure_probabilities: [0.0, 0.15, 0.25, 0.4, 0.6]
+
+# Try larger state sizes
+service:
+  state_size: 500.0
+
+# Change the number of UAVs
+uav:
+  count: 10
+```
+
+Then re-run experiments and regenerate plots.
+
+---
 
 ## Configuration
 
@@ -183,10 +302,11 @@ Cost = w₁·Interruption + w₂·StateTransfer + w₃·StateLoss
 
 1. **Discrete-event simulation** (1 step = 1 second) for reproducibility and transparency.
 2. **Distance-based network model** with bandwidth decay, latency growth, packet loss, and configurable failure injection.
-3. **Stop-and-copy migration** — service is interrupted during transfer (conservative model).
-4. **Tabular Q-learning** for RL baseline — intentionally simple for transparency. If it underperforms, that is a valid finding.
-5. **No external LLM APIs** — the agentic manager uses rule-based reasoning with context and memory, not language model calls.
-6. **All randomness is seeded** — every experiment is fully reproducible.
+3. **Connectivity-driven disruption**: services are interrupted when the hosting UAV becomes isolated (models real-world dependency on connectivity). Recovery time depends on checkpoint/replica freshness.
+4. **Stop-and-copy migration** — service is interrupted during transfer (conservative model).
+5. **Tabular Q-learning** for RL baseline — intentionally simple for transparency. If it underperforms, that is a valid finding.
+6. **No external LLM APIs** — the agentic manager uses rule-based reasoning with context and memory, not language model calls.
+7. **All randomness is seeded** — every experiment is fully reproducible.
 
 ## Reproducibility
 
